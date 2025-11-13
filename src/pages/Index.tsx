@@ -82,12 +82,38 @@ const Index = () => {
     SOL: { deposited: 0, wagered: 0 },
   });
   const [showUSD, setShowUSD] = useState(false);
-  const [cryptoPrices] = useState<CryptoPrices>({
+  const [betInUSD, setBetInUSD] = useState(false);
+  const [cryptoPrices, setCryptoPrices] = useState<CryptoPrices>({
     BTC: 97000,
     LTC: 88,
     ETH: 3600,
     SOL: 210,
   });
+
+  // Fetch crypto prices from CoinGecko
+  useEffect(() => {
+    const fetchPrices = async () => {
+      try {
+        const response = await fetch(
+          'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,litecoin,ethereum,solana&vs_currencies=usd'
+        );
+        const data = await response.json();
+        setCryptoPrices({
+          BTC: data.bitcoin.usd,
+          LTC: data.litecoin.usd,
+          ETH: data.ethereum.usd,
+          SOL: data.solana.usd,
+        });
+      } catch (error) {
+        console.error('Failed to fetch crypto prices:', error);
+      }
+    };
+
+    fetchPrices();
+    const interval = setInterval(fetchPrices, 60000); // Update every minute
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Deposit/Withdraw states
   const [depositAmount, setDepositAmount] = useState("");
@@ -595,6 +621,33 @@ const Index = () => {
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
+                {(() => {
+                  const { deposited, wagered } = wagerTracking[selectedCrypto];
+                  const requiredWager = deposited * 50;
+                  const remainingWager = Math.max(0, requiredWager - wagered);
+                  
+                  return remainingWager > 0 ? (
+                    <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                      <p className="text-sm font-semibold text-yellow-600 dark:text-yellow-400">
+                        Wagering Requirement
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        You need to wager <span className="font-bold text-foreground">{remainingWager.toFixed(6)} {selectedCrypto}</span> more
+                        {' '}(<span className="font-bold text-foreground">${(remainingWager * cryptoPrices[selectedCrypto]).toFixed(2)}</span>)
+                        {' '}before you can withdraw.
+                      </p>
+                      <div className="mt-2 bg-muted rounded-full h-2 overflow-hidden">
+                        <div 
+                          className="bg-primary h-full transition-all duration-300"
+                          style={{ width: `${Math.min(100, (wagered / requiredWager) * 100)}%` }}
+                        />
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Progress: {wagered.toFixed(6)} / {requiredWager.toFixed(6)} {selectedCrypto}
+                      </p>
+                    </div>
+                  ) : null;
+                })()}
                 <div className="space-y-2">
                   <Label htmlFor="withdraw">Amount</Label>
                   <Input
@@ -641,9 +694,9 @@ const Index = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h2 className="text-xl font-bold text-muted-foreground">Dealer</h2>
-                  {dealerRevealed && (
-                    <div className="text-3xl font-bold text-primary bg-primary/10 px-6 py-2 rounded-lg border-2 border-primary/30 shadow-lg">
-                      {calculateHandValue(dealerHand)}
+                  {dealerHand.length > 0 && (
+                    <div className="text-4xl font-bold text-primary bg-primary/10 px-8 py-3 rounded-lg border-2 border-primary shadow-lg">
+                      {dealerRevealed ? calculateHandValue(dealerHand) : calculateHandValue([dealerHand[0]])}
                     </div>
                   )}
                 </div>
@@ -694,9 +747,20 @@ const Index = () => {
 
               {/* Bet Controls */}
               <div className="space-y-4">
-                <div className="flex items-center justify-center gap-4">
-                  <Label className="text-muted-foreground">Bet Amount:</Label>
-                  <div className="flex gap-2">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="flex items-center gap-3">
+                    <Label className="text-lg font-semibold">Bet Amount</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setBetInUSD(!betInUSD)}
+                      disabled={gameState !== "betting"}
+                      className="text-xs"
+                    >
+                      {betInUSD ? "USD" : selectedCrypto}
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -708,10 +772,13 @@ const Index = () => {
                     </Button>
                     <Input
                       type="number"
-                      step="0.001"
-                      min="0.001"
-                      value={bet}
-                      onChange={(e) => setBet(Math.max(0.001, parseFloat(e.target.value) || 0.001))}
+                      step={betInUSD ? "1" : "0.001"}
+                      min={betInUSD ? "1" : "0.001"}
+                      value={betInUSD ? (bet * cryptoPrices[selectedCrypto]).toFixed(2) : bet.toFixed(6)}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || (betInUSD ? 1 : 0.001);
+                        setBet(betInUSD ? val / cryptoPrices[selectedCrypto] : val);
+                      }}
                       disabled={gameState !== "betting"}
                       className="w-32 text-center bg-muted border-border"
                     />
@@ -725,6 +792,12 @@ const Index = () => {
                       2×
                     </Button>
                   </div>
+                  <p className="text-sm text-muted-foreground">
+                    {betInUSD 
+                      ? `≈ ${bet.toFixed(6)} ${selectedCrypto}`
+                      : `≈ $${(bet * cryptoPrices[selectedCrypto]).toFixed(2)}`
+                    }
+                  </p>
                 </div>
 
                 {/* Action Buttons */}
@@ -741,7 +814,7 @@ const Index = () => {
                         size="lg"
                         className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold px-8 shadow-lg"
                       >
-                        Deal ({bet.toFixed(6)} {selectedCrypto})
+                        Deal ({betInUSD ? `$${(bet * cryptoPrices[selectedCrypto]).toFixed(2)}` : `${bet.toFixed(6)} ${selectedCrypto}`})
                       </Button>
                     </motion.div>
                   )}
